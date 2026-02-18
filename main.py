@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from random import randint
 from typing import Annotated, Any, Generic, TypeVar
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlmodel import SQLModel, create_engine, Session, select, Field
 
@@ -11,6 +11,10 @@ class Campaign(SQLModel, table=True):
     name: str = Field(index=True)
     date: datetime | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), nullable=True, index=True)
+
+class CampaignCreate(SQLModel):
+    name: str
+    date: datetime | None
 
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
@@ -66,23 +70,15 @@ async def read_campaign(id: int, session: SessionDep):
         raise HTTPException(status_code=404)
     
     return {"data": data}
-#     for campaign in data:
-#         if campaign["campaign_id"] == id:
-#             return {"campaign": campaign}
-#         raise HTTPException(status_code=404, detail="Campaign not found")
 
-# @app.post("/campaigns", status_code=201)
-# async def create_campaign(body: dict[str, Any]):
-#     new : Any = {
-#         "campaign_id": randint(3, 100),
-#         "name": body.get("name"),
-#         "due_date": body.get("due_date"),
-#         "created_at": datetime.now(),
-#     },
+@app.post("/campaigns", status_code=201, response_model=ApiResponse[CampaignCreate])
+async def create_campaign(campaign: CampaignCreate, session: SessionDep):
+    db_campaign = Campaign.model_validate(campaign)
+    session.add(db_campaign)
+    session.commit()
+    session.refresh(db_campaign)
 
-#     data.append(new)
-
-#     return {"campaign": new, "message": "Created!"}
+    return{"data": campaign}
 
 # @app.put(f"/campaigns/{id}")
 # async def update_campaign(id: int,body: dict[str, Any]):
