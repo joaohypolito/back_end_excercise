@@ -6,6 +6,9 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlmodel import SQLModel, create_engine, Session, select, Field
 
+# Modelo e esquema de banco de dados: representa a tabela de campanhas
+# no SQLite usando SQLModel (Pydantic + SQLAlchemy) para mapear os campos
+# e garantir validação/serialização automática nas respostas da API.
 class Campaign(SQLModel, table=True):
     campaign_id: int | None = Field(default=None, primary_key=True)
     name: str = Field(index=True)
@@ -16,22 +19,30 @@ class CampaignCreate(SQLModel):
     name: str
     date: datetime | None
 
+# Configuração do banco: arquivo SQLite local usado pela aplicação.
 sqlite_file_name = "database.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 
+# Parâmetros extras do driver SQLite (necessário para uso em apps async).
 connect_args = {"check_same_thread": False}
 engine = create_engine(sqlite_url, connect_args=connect_args)
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
+# Dependência de sessão com FastAPI: abre uma sessão por requisição e
+# garante o fechamento automático após o uso.
 def get_session():
     with Session(engine) as session:
         yield session
 
+# Alias de tipo para injeção de dependência, deixando as rotas mais legíveis.
 SessionDep = Annotated[Session, Depends(get_session)]
 
 @asynccontextmanager
+# Ciclo de vida da aplicação: executa lógica de inicialização/encerramento.
+# Aqui é usado para criar as tabelas e realizar uma seed inicial de dados
+# de forma idempotente (só insere se o banco ainda estiver vazio).
 async def lifespan (app: FastAPI):
     create_db_and_tables()
     with Session(engine) as session:
@@ -50,6 +61,10 @@ async def lifespan (app: FastAPI):
 app = FastAPI(root_path="/api/v1", lifespan=lifespan)
 
 T = TypeVar("T")
+
+# Wrapper genérico de resposta: define um envelope padrão {"data": ...}
+# parametrizado pelo tipo T, garantindo consistência nas respostas JSON
+# e reaproveitamento do mesmo formato em múltiplos endpoints.
 class ApiResponse(BaseModel, Generic[T]):
     data: T
 
@@ -95,26 +110,12 @@ async def update_campaign(id: int, campaign: CampaignCreate, session: SessionDep
     
     return {"data": data}
 
-    # for i, campaign in enumerate(data):
-    #     if campaign.get["campaign_id"] == id:
-    #         updated : Any = {
-    #             "campaign_id": id,
-    #             "name": body.get("name"),
-    #             "due_date": body.get("due_date"),
-    #             "created_at": campaign.get["created_at"],
-    #         },
-
-    #         data[i] = updated
-
-    #         return {"campaign": updated, "message": "Campaign updated!"}
-    # raise HTTPException(status_code=404, detail="Campaign not found")
-
-# @app.delete(f"/campaigns/{id}")
-# async def delete_campaign(id: int,body: dict[str, Any]):
-#     for i, campaign in enumerate(data):
-#         if campaign.get["campaign_id"] == id:
-#             data.pop(i)
-
-#             return Response(status_code=204)
-#     raise HTTPException(status_code=404, detail="Campaign not found")
-
+@app.delete(f"/campaigns/{id}", status_code=204)
+async def delete_campaign(id: int, session: SessionDep):
+    data = session.get(Campaign, id)
+    
+    if not data:
+        raise HTTPException(status_code=404)
+    
+    session.delete(data)
+    session.commit()
